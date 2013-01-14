@@ -6,17 +6,14 @@ import org.specs2.mutable._
 import org.specs2.specification.BeforeExample
 import org.specs2.mock._
 
-import org.apache.lucene.document.Document
+import org.apache.lucene.document._
 import org.apache.lucene.index.IndexWriter
-import org.apache.lucene.index.IndexableField
 
-class IndexSpec extends Specification with Mockito with BeforeExample {
-  def before {
-    indexWriter = mock[IndexWriter]
-    index = new Index(indexWriter)
-  }
-  var indexWriter: IndexWriter = null
-  var index: Index = null
+class IndexSpec extends Specification with Mockito {
+  isolated
+
+  val indexWriter = mock[IndexWriter]
+  val index = new Index(indexWriter)
 
   "an index" should {
     "fail indexing an empty document" in {
@@ -28,7 +25,7 @@ class IndexSpec extends Specification with Mockito with BeforeExample {
       index.add(obj)
       val doc = capture[Document]
       there was one(indexWriter).addDocument(doc)
-      doc.value.getFields.map(_.name) must contain("id") and have size(1)
+      doc.value.getFields.map(_.name).toSet must be_==(obj.keys)
     }
 
     "make a doc whose fields match the object's" in {
@@ -46,6 +43,42 @@ class IndexSpec extends Specification with Mockito with BeforeExample {
       for {
         (k, vs) <- obj
       } doc.toSeq.filter(_.name == k).length must be_==(vs.length)
+    }
+
+    "not know how to make a field from a List" in {
+      index.mkField("", Nil) must throwA[IllegalArgumentException]
+    }
+
+    "make a TextField for a String" in {
+      index.mkField("", "") must beAnInstanceOf[TextField]
+    }
+
+    "make a IntField for a Int" in {
+      index.mkField("", 1) must beAnInstanceOf[IntField]
+    }
+
+    "make a LongField for a Long" in {
+      index.mkField("", 1l) must beAnInstanceOf[LongField]
+    }
+
+    "make a FloatField for a Float" in {
+      index.mkField("", 1f) must beAnInstanceOf[FloatField]
+    }
+
+    "make a DoubleField for a Double" in {
+      index.mkField("", 1d) must beAnInstanceOf[DoubleField]
+    }
+
+    "use the provided fieldStore configuration" in {
+      val fieldStore = spy(Map("a" -> true, "b" -> false))
+      val index = new Index(indexWriter,
+                            fieldStore = fieldStore)
+      index.mkField("a", "").fieldType.stored must be_==(true)
+      index.mkField("b", "").fieldType.stored must be_==(false)
+      index.mkField("c", "") must throwA[NoSuchElementException]
+      there was one(fieldStore).apply("a")
+      there was one(fieldStore).apply("b")
+      there was one(fieldStore).apply("c")
     }
 
   }

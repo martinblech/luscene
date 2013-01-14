@@ -1,12 +1,10 @@
 package musicdb
 
-import org.apache.lucene.document.Document
-import org.apache.lucene.document.Field
-import org.apache.lucene.document.TextField
-import org.apache.lucene.index.IndexWriter
-import org.apache.lucene.index.IndexableField
+import org.apache.lucene.document._
+import org.apache.lucene.index.{IndexWriter, IndexableField}
 
-class Index(indexWriter: IndexWriter) {
+class Index(indexWriter: IndexWriter,
+            fieldStore: String => Boolean = _ => false) {
 
   def add(obj: Map[String, Seq[Any]]) {
     require(!obj.isEmpty)
@@ -16,13 +14,24 @@ class Index(indexWriter: IndexWriter) {
   def mkDoc(obj: Map[String, Seq[Any]]) = {
     val doc = new Document
     for {
-      (k, vs) <- obj
-      v <- vs
-    } doc add mkField(k, v)
+      (name, values) <- obj
+      value <- values
+    } doc add mkField(name, value)
     doc
   }
 
-  def mkField(k: String, v: Any): IndexableField =
-    new TextField(k, v.toString, Field.Store.YES) // TODO make this configurable
+  def mkField(name: String, value: Any): IndexableField = {
+    lazy val store = if (fieldStore(name)) Field.Store.YES else Field.Store.NO
+    value match {
+      case s: String => new TextField(name, s, store)
+      case i: Int => new IntField(name, i, store)
+      case l: Long => new LongField(name, l, store)
+      case f: Float => new FloatField(name, f, store)
+      case d: Double => new DoubleField(name, d, store)
+      case _ => throw new IllegalArgumentException(
+        "don't know how to index '%s' (%s)".format(value, value.getClass)
+      )
+    }
+  }
 
 }
