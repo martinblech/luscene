@@ -3,7 +3,6 @@ package musicdb
 import scala.collection.JavaConversions._
 
 import org.specs2.mutable._
-import org.specs2.specification.BeforeExample
 import org.specs2.mock._
 
 import org.apache.lucene.document._
