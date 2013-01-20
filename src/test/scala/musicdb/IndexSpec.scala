@@ -6,7 +6,7 @@ import org.specs2.mutable._
 import org.specs2.mock._
 
 import org.apache.lucene.document._
-import org.apache.lucene.index.IndexWriter
+import org.apache.lucene.index.{IndexWriter, Term}
 
 class IndexSpec extends Specification with Mockito {
   isolated
@@ -80,5 +80,31 @@ class IndexSpec extends Specification with Mockito {
       there was one(fieldStore).apply("c")
     }
 
+    "fail to update with an empty document" in {
+      index.update("id", 1, Map()) must throwA[IllegalArgumentException]
+    }
+
+    "update a simple document" in {
+      val obj = Map("id" -> Seq("bla"), "val" -> Seq("x"))
+      val fieldName = "id"
+      val fieldValue = "bla"
+      index.update(fieldName, fieldValue, obj)
+      val term = capture[Term]
+      val doc = capture[Document]
+      there was one(indexWriter).updateDocument(term, doc)
+      term.value.field must be_==(fieldName)
+      term.value.text must be_==(fieldValue)
+      doc.value.getFields.map(_.name).toSet must be_==(obj.keys)
+    }
+
+    "delete a document" in {
+      val fieldName = "id"
+      val fieldValue = "bla"
+      index.delete(fieldName, fieldValue)
+      val term = capture[Term]
+      there was one(indexWriter).deleteDocuments(term)
+      term.value.field must be_==(fieldName)
+      term.value.text must be_==(fieldValue)
+    }
   }
 }

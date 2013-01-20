@@ -1,13 +1,16 @@
 package musicdb
 
 import org.apache.lucene.document._
-import org.apache.lucene.index.{IndexWriter, IndexableField}
+import org.apache.lucene.index.{IndexWriter, IndexableField, Term}
 
 class Index(indexWriter: IndexWriter,
             fieldStore: String => Boolean = _ => false) {
 
-  def add(obj: Map[String, Seq[Any]]) {
+  def checkObj(obj: Map[String, Seq[Any]]) =
     require(!obj.isEmpty)
+
+  def add(obj: Map[String, Seq[Any]]) {
+    checkObj(obj)
     indexWriter addDocument mkDoc(obj)
   }
 
@@ -32,6 +35,27 @@ class Index(indexWriter: IndexWriter,
         "don't know how to index '%s' (%s)".format(value, value.getClass)
       )
     }
+  }
+
+  def update(fieldName: String, fieldValue: Any, obj: Map[String, Seq[Any]]) {
+    checkObj(obj)
+    val term = mkTerm(fieldName, fieldValue)
+    val doc = mkDoc(obj)
+    indexWriter.updateDocument(term, doc)
+  }
+
+  def mkTerm(fieldName: String, fieldValue: Any) = fieldValue match {
+    case s: String => new Term(fieldName, s)
+    // TODO figure out what to do with numbers
+    case _ => throw new IllegalArgumentException(
+      "don't know how to make a term for '%s' (%s)".format(
+        fieldValue, fieldValue.getClass)
+    )
+  }
+
+  def delete(fieldName: String, fieldValue: Any) {
+    val term = mkTerm(fieldName, fieldValue)
+    indexWriter deleteDocuments term
   }
 
 }
