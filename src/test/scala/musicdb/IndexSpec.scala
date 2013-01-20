@@ -7,6 +7,7 @@ import org.specs2.mock._
 
 import org.apache.lucene.document._
 import org.apache.lucene.index.{IndexWriter, Term}
+import org.apache.lucene.search.{Query, NumericRangeQuery}
 
 class IndexSpec extends Specification with Mockito {
   isolated
@@ -81,10 +82,17 @@ class IndexSpec extends Specification with Mockito {
     }
 
     "fail to update with an empty document" in {
-      index.update("id", 1, Map()) must throwA[IllegalArgumentException]
+      index.update("", "", Map()) must throwA[IllegalArgumentException]
     }
 
-    "update a simple document" in {
+    "fail to update with bad id values" in {
+      val obj = Map("a" -> Seq("b"))
+      index.update("", Nil, obj) must throwA[IllegalArgumentException]
+      (index.update("", new java.math.BigDecimal(1), obj)
+        must throwA[IllegalArgumentException])
+    }
+
+    "update a simple document with a string id" in {
       val obj = Map("id" -> Seq("bla"), "val" -> Seq("x"))
       val fieldName = "id"
       val fieldValue = "bla"
@@ -97,7 +105,29 @@ class IndexSpec extends Specification with Mockito {
       doc.value.getFields.map(_.name).toSet must be_==(obj.keys)
     }
 
-    "delete a document" in {
+    "update a simple document with a numeric id" in {
+      val obj = Map("id" -> Seq("bla"), "val" -> Seq("x"))
+      val fieldName = "id"
+      val fieldValue = 1
+      index.update(fieldName, fieldValue, obj)
+      val query = capture[NumericRangeQuery[Integer]]
+      val doc = capture[Document]
+      there was one(indexWriter).deleteDocuments(query)
+      query.value.includesMin must be_==(true)
+      query.value.includesMax must be_==(true)
+      query.value.getMin must be_==(fieldValue)
+      query.value.getMax must be_==(fieldValue)
+      there was one(indexWriter).addDocument(doc)
+      doc.value.getFields.map(_.name).toSet must be_==(obj.keys)
+    }
+
+    "fail to delete with bad id values" in {
+      index.delete("", Nil) must throwA[IllegalArgumentException]
+      (index.delete("", new java.math.BigDecimal(1))
+        must throwA[IllegalArgumentException])
+    }
+
+    "delete a document with a string id" in {
       val fieldName = "id"
       val fieldValue = "bla"
       index.delete(fieldName, fieldValue)
@@ -105,6 +135,18 @@ class IndexSpec extends Specification with Mockito {
       there was one(indexWriter).deleteDocuments(term)
       term.value.field must be_==(fieldName)
       term.value.text must be_==(fieldValue)
+    }
+
+    "delete a document with a numeric id" in {
+      val fieldName = "id"
+      val fieldValue = 1f
+      index.delete(fieldName, fieldValue)
+      val query = capture[NumericRangeQuery[java.lang.Float]]
+      there was one(indexWriter).deleteDocuments(query)
+      query.value.includesMin must be_==(true)
+      query.value.includesMax must be_==(true)
+      query.value.getMin must be_==(fieldValue)
+      query.value.getMax must be_==(fieldValue)
     }
   }
 }

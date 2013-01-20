@@ -2,6 +2,7 @@ package musicdb
 
 import org.apache.lucene.document._
 import org.apache.lucene.index.{IndexWriter, IndexableField, Term}
+import org.apache.lucene.search.NumericRangeQuery
 
 class Index(indexWriter: IndexWriter,
             fieldStore: String => Boolean = _ => false) {
@@ -38,24 +39,50 @@ class Index(indexWriter: IndexWriter,
   }
 
   def update(fieldName: String, fieldValue: Any, obj: Map[String, Seq[Any]]) {
-    checkObj(obj)
-    val term = mkTerm(fieldName, fieldValue)
-    val doc = mkDoc(obj)
-    indexWriter.updateDocument(term, doc)
-  }
-
-  def mkTerm(fieldName: String, fieldValue: Any) = fieldValue match {
-    case s: String => new Term(fieldName, s)
-    // TODO figure out what to do with numbers
-    case _ => throw new IllegalArgumentException(
-      "don't know how to make a term for '%s' (%s)".format(
-        fieldValue, fieldValue.getClass)
-    )
+    fieldValue match {
+      case s: String => {
+        checkObj(obj)
+        val doc = mkDoc(obj)
+        val term = new Term(fieldName, s)
+        indexWriter.updateDocument(term, doc)
+      }
+      case _ => {
+        delete(fieldName, fieldValue)
+        add(obj)
+      }
+    }
   }
 
   def delete(fieldName: String, fieldValue: Any) {
-    val term = mkTerm(fieldName, fieldValue)
-    indexWriter deleteDocuments term
+    fieldValue match {
+      case s: String => {
+        val term = new Term(fieldName, s)
+        indexWriter deleteDocuments term
+      }
+      case n: Number => {
+        val query = n match {
+          case i: Integer =>
+            NumericRangeQuery.newIntRange(fieldName, i, i, true, true)
+          case l: java.lang.Long =>
+            NumericRangeQuery.newLongRange(fieldName, l, l, true, true)
+          case f: java.lang.Float =>
+            NumericRangeQuery.newFloatRange(fieldName, f, f, true, true)
+          case d: java.lang.Double =>
+            NumericRangeQuery.newDoubleRange(fieldName, d, d, true, true)
+          case _ => throw new IllegalArgumentException(
+            "invalid field value '%s' (%s)".format(
+              fieldValue, fieldValue.getClass
+            )
+          )
+        }
+        indexWriter deleteDocuments query
+      }
+      case _ => throw new IllegalArgumentException(
+        "invalid field value '%s' (%s)".format(
+          fieldValue, fieldValue.getClass
+        )
+      )
+    }
   }
 
 }
