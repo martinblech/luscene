@@ -7,7 +7,7 @@ import org.specs2.mock._
 
 import org.apache.lucene.document._
 import org.apache.lucene.index.{IndexWriter, Term}
-import org.apache.lucene.search.{Query, NumericRangeQuery}
+import org.apache.lucene.search._
 
 class IndexSpec extends Specification with Mockito {
   isolated
@@ -148,5 +148,35 @@ class IndexSpec extends Specification with Mockito {
       query.value.getMin must be_==(fieldValue)
       query.value.getMax must be_==(fieldValue)
     }
+
+    "fail making a query for an empty object" in {
+      index.mkQuery(Map(), fuzzy = true) must throwA[IllegalArgumentException]
+    }
+
+    "make a non-fuzzy query from a single-field, single-word object" in {
+      val fieldName = "a"
+      val fieldValue = "hello"
+      val obj = Map(fieldName -> Seq(fieldValue))
+      index.mkQuery(obj, fuzzy = false) match {
+        case tq: TermQuery => {
+          tq.getTerm.field must be_==(fieldName)
+          tq.getTerm.text must be_==(fieldValue)
+        }
+      }
+    }
+
+    "make a non-fuzzy query for a multi-field, single-word object" in {
+      val obj = Map("a" -> Seq("hello"), "b" -> Seq("world"))
+      index.mkQuery(obj, fuzzy = false) match {
+        case bq: BooleanQuery => {
+          for (clause <- bq) {
+            clause.getOccur must be_==(BooleanClause.Occur.MUST)
+            clause.getQuery must beAnInstanceOf[TermQuery]
+          }
+        }
+      }
+    }
+
+    // TODO multi-word queries (requires search analyzer)
   }
 }
