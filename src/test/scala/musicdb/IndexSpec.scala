@@ -5,15 +5,21 @@ import scala.collection.JavaConversions._
 import org.specs2.mutable._
 import org.specs2.mock._
 
+import org.apache.lucene.analysis.core.WhitespaceAnalyzer
 import org.apache.lucene.document._
 import org.apache.lucene.index.{IndexWriter, Term}
 import org.apache.lucene.search._
+import org.apache.lucene.util.Version
+
+import java.io.Reader
 
 class IndexSpec extends Specification with Mockito {
   isolated
 
   val indexWriter = mock[IndexWriter]
-  val index = new Index(indexWriter)
+  val fieldStore = (_: String) => false
+  val queryAnalyzer = new WhitespaceAnalyzer(Version.LUCENE_40)
+  val index = new Index(indexWriter, fieldStore, queryAnalyzer)
 
   "an index" should {
     "fail indexing an empty document" in {
@@ -72,7 +78,8 @@ class IndexSpec extends Specification with Mockito {
     "use the provided fieldStore configuration" in {
       val fieldStore = spy(Map("a" -> true, "b" -> false))
       val index = new Index(indexWriter,
-                            fieldStore = fieldStore)
+                            fieldStore = fieldStore,
+                            queryAnalyzer = null)
       index.mkField("a", "").fieldType.stored must be_==(true)
       index.mkField("b", "").fieldType.stored must be_==(false)
       index.mkField("c", "") must throwA[NoSuchElementException]
@@ -153,7 +160,7 @@ class IndexSpec extends Specification with Mockito {
       index.mkQuery(Map(), fuzzy = true) must throwA[IllegalArgumentException]
     }
 
-    "make a non-fuzzy query from a single-field, single-word object" in {
+    "make an exact query from a single-field, single-word object" in {
       val fieldName = "a"
       val fieldValue = "hello"
       val obj = Map(fieldName -> Seq(fieldValue))
@@ -165,10 +172,11 @@ class IndexSpec extends Specification with Mockito {
       }
     }
 
-    "make a non-fuzzy query for a multi-field, single-word object" in {
+    "make an exact query for a multi-field, single-word object" in {
       val obj = Map("a" -> Seq("hello"), "b" -> Seq("world"))
       index.mkQuery(obj, fuzzy = false) match {
         case bq: BooleanQuery => {
+          bq.size must be_==(obj.size)
           for (clause <- bq) {
             clause.getOccur must be_==(BooleanClause.Occur.MUST)
             clause.getQuery must beAnInstanceOf[TermQuery]
@@ -177,6 +185,31 @@ class IndexSpec extends Specification with Mockito {
       }
     }
 
-    // TODO multi-word queries (requires search analyzer)
+    "make an exact query from a single-field, multi-word object" in {
+      val obj = Map("a" -> Seq("hello world"))
+      index.mkQuery(obj, fuzzy = false) match {
+        case pq: PhraseQuery => {
+          val terms = pq.getTerms
+          terms.length must be_==(2)
+          terms(0).text must be_==("hello")
+          terms(1).text must be_==("world")
+        }
+      }
+    }
+
+    "make an exact query for a multi-field, multi-word object" in {
+      val obj = Map("a" -> Seq("hello world"), "b" -> Seq("hi there"))
+      index.mkQuery(obj, fuzzy = false) match {
+        case bq: BooleanQuery => {
+          bq.size must be_==(obj.size)
+          for (clause <- bq) {
+            clause.getOccur must be_==(BooleanClause.Occur.MUST)
+            clause.getQuery must beAnInstanceOf[PhraseQuery]
+          }
+        }
+      }
+    }
+
+    // TODO fuzzy queries
   }
 }

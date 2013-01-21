@@ -1,11 +1,16 @@
 package musicdb
 
+import java.io.StringReader
+
+import org.apache.lucene.analysis.Analyzer
+import org.apache.lucene.analysis.tokenattributes.CharTermAttribute
 import org.apache.lucene.document._
 import org.apache.lucene.index.{IndexWriter, IndexableField, Term}
 import org.apache.lucene.search._
 
 class Index(indexWriter: IndexWriter,
-            fieldStore: String => Boolean = _ => false) {
+            fieldStore: String => Boolean,
+            queryAnalyzer: Analyzer) {
 
   def checkObj(obj: Map[String, Seq[Any]]) =
     require(!obj.isEmpty)
@@ -66,11 +71,11 @@ class Index(indexWriter: IndexWriter,
   }
 
   def mkQuery(obj: Map[String, Seq[Any]], fuzzy: Boolean): Query = {
-    val pairs = for {
+    val queries = for {
       (fieldName, fieldValues) <- obj
       fieldValue <- fieldValues
     } yield mkQuery(fieldName, fieldValue, fuzzy)
-    pairs match {
+    queries match {
       case Nil => throw new IllegalArgumentException(
         "cannot make a query from an empty object"
       )
@@ -80,7 +85,7 @@ class Index(indexWriter: IndexWriter,
         val occur =
           if (fuzzy) BooleanClause.Occur.SHOULD
           else BooleanClause.Occur.MUST
-        pairs foreach { q =>
+        queries foreach { q =>
           bq add new BooleanClause(q, occur)
         }
         bq
@@ -90,19 +95,44 @@ class Index(indexWriter: IndexWriter,
 
   def mkQuery(fieldName: String, fieldValue: Any, fuzzy: Boolean): Query =
     fieldValue match {
-      case s: String => {
-        // TODO refine this
-        new TermQuery(new Term(fieldName, s))
-      }
       case i: Int => NumericRangeQuery.newIntRange(fieldName, i, i, true, true)
       case l: Long => NumericRangeQuery.newLongRange(fieldName, l, l, true, true)
       case f: Float =>
         NumericRangeQuery.newFloatRange(fieldName, f, f, true, true)
       case d: Double =>
         NumericRangeQuery.newDoubleRange(fieldName, d, d, true, true)
+      case s: String => {
+        extractTokens(fieldName, s) match {
+          case Nil => throw new IllegalArgumentException(
+            "could not extract any tokens from '%s'".format(fieldValue))
+          case Seq(t) => new TermQuery(new Term(fieldName, s))
+          case tokens => {
+            val pq = new PhraseQuery
+            tokens foreach { token =>
+              pq add new Term(fieldName, token)
+            }
+            pq
+          }
+        }
+      }
       case _ => throw new IllegalArgumentException(
         "cannot make a query from '%s' (%s)".format(
           fieldValue, fieldValue.getClass))
     }
+
+  def extractTokens(fieldName: String, fieldValue: String): Seq[String] = {
+    val ts = queryAnalyzer.tokenStream(fieldName, new StringReader(fieldValue))
+    val charTermAttr = ts.addAttribute(classOf[CharTermAttribute])
+    val tokens = new scala.collection.mutable.MutableList[String]
+    try {
+      ts.reset
+      while (ts.incrementToken) {
+        tokens += charTermAttr.toString
+      }
+    } finally {
+      ts.close
+    }
+    tokens
+  }
 
 }
