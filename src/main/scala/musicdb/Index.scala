@@ -1,5 +1,7 @@
 package musicdb
 
+import scala.collection.JavaConversions.{setAsJavaSet, iterableAsScalaIterable}
+
 import java.io.StringReader
 
 import org.apache.lucene.analysis.Analyzer
@@ -12,15 +14,19 @@ class Index(indexWriter: IndexWriter,
             fieldStore: String => Boolean,
             queryAnalyzer: Analyzer) {
 
-  def checkObj(obj: Map[String, Seq[Any]]) =
+  lazy val searcherManager = new SearcherManager(indexWriter, true, null)
+
+  type IndexObject = Map[String, Seq[Any]]
+
+  def checkObj(obj: IndexObject) =
     require(!obj.isEmpty)
 
-  def add(obj: Map[String, Seq[Any]]) {
+  def add(obj: IndexObject) {
     checkObj(obj)
     indexWriter addDocument mkDoc(obj)
   }
 
-  def mkDoc(obj: Map[String, Seq[Any]]) = {
+  def mkDoc(obj: IndexObject) = {
     val doc = new Document
     for {
       (name, values) <- obj
@@ -42,7 +48,22 @@ class Index(indexWriter: IndexWriter,
     }
   }
 
-  def update(fieldName: String, fieldValue: Any, obj: Map[String, Seq[Any]]) {
+  def mkObj(doc: Document): IndexObject =
+    for {
+      (fieldName, fields) <- doc.groupBy(_.name)
+    } yield (fieldName, fields.map(fieldValue _).toSeq)
+
+  def fieldValue(field: IndexableField) = field match {
+    case _: StringField | _: TextField =>
+      field.stringValue
+    case _: IntField | _: LongField | _: FloatField | _: DoubleField =>
+      field.numericValue
+    case _ => throw new IllegalArgumentException(
+      "don't know how to extract value from field %s".format(field)
+    )
+  }
+
+  def update(fieldName: String, fieldValue: Any, obj: IndexObject) {
     fieldValue match {
       case s: String => {
         checkObj(obj)
@@ -70,7 +91,7 @@ class Index(indexWriter: IndexWriter,
     }
   }
 
-  def mkQuery(obj: Map[String, Seq[Any]], fuzzy: Boolean): Query = {
+  def mkQuery(obj: IndexObject, fuzzy: Boolean): Query = {
     val queries = for {
       (fieldName, fieldValues) <- obj
       fieldValue <- fieldValues
@@ -85,33 +106,54 @@ class Index(indexWriter: IndexWriter,
         val occur =
           if (fuzzy) BooleanClause.Occur.SHOULD
           else BooleanClause.Occur.MUST
-        queries foreach { q =>
-          bq add new BooleanClause(q, occur)
-        }
+        for (q <- queries) bq add new BooleanClause(q, occur)
         bq
       }
     }
   }
 
-  def mkQuery(fieldName: String, fieldValue: Any, fuzzy: Boolean): Query =
+  def mkQuery(fieldName: String, fieldValue: Any, fuzzy: Boolean): Query = {
+    def numFuzzyCheck {
+      if (fuzzy) throw new IllegalArgumentException(
+        "can't make fuzzy queries over numeric fields (%s -> %s)".format(
+          fieldName, fieldValue)
+      )
+    }
     fieldValue match {
-      case i: Int => NumericRangeQuery.newIntRange(fieldName, i, i, true, true)
-      case l: Long => NumericRangeQuery.newLongRange(fieldName, l, l, true, true)
-      case f: Float =>
+      case i: Int => {
+        numFuzzyCheck
+        NumericRangeQuery.newIntRange(fieldName, i, i, true, true)
+      }
+      case l: Long => {
+        numFuzzyCheck
+        NumericRangeQuery.newLongRange(fieldName, l, l, true, true)
+      }
+      case f: Float => {
+        numFuzzyCheck
         NumericRangeQuery.newFloatRange(fieldName, f, f, true, true)
-      case d: Double =>
+      }
+      case d: Double => {
+        numFuzzyCheck
         NumericRangeQuery.newDoubleRange(fieldName, d, d, true, true)
+      }
       case s: String => {
-        extractTokens(fieldName, s) match {
-          case Nil => throw new IllegalArgumentException(
-            "could not extract any tokens from '%s'".format(fieldValue))
-          case Seq(t) => new TermQuery(new Term(fieldName, s))
-          case tokens => {
-            val pq = new PhraseQuery
-            tokens foreach { token =>
-              pq add new Term(fieldName, token)
-            }
+        val terms = extractTokens(fieldName, s) map (t => new Term(fieldName, t))
+        require(!terms.isEmpty, "no tokens in '%s'".format(fieldValue))
+        val mkTermQuery: Term => Query =
+          if (fuzzy) new FuzzyQuery(_) else new TermQuery(_)
+        if (terms.size == 1)
+          mkTermQuery(terms(0))
+        else {
+          val pq = new PhraseQuery
+          for (t <- terms) pq add t
+          if (!fuzzy)
             pq
+          else {
+            val bq = new BooleanQuery
+            val occur = BooleanClause.Occur.SHOULD
+            bq add new BooleanClause(pq, occur)
+            for (t <- terms) bq add new BooleanClause(mkTermQuery(t), occur)
+            bq
           }
         }
       }
@@ -119,6 +161,7 @@ class Index(indexWriter: IndexWriter,
         "cannot make a query from '%s' (%s)".format(
           fieldValue, fieldValue.getClass))
     }
+  }
 
   def extractTokens(fieldName: String, fieldValue: String): Seq[String] = {
     val ts = queryAnalyzer.tokenStream(fieldName, new StringReader(fieldValue))
@@ -135,4 +178,34 @@ class Index(indexWriter: IndexWriter,
     tokens
   }
 
+  def search(query: Query, offset: Int, length: Int,
+      fields: Option[Set[String]]): SearchResults = {
+    val s = acquireSearcher
+    try {
+      val topN = offset + length
+      val topDocs = s.search(query, topN)
+      val results = for {
+        scoreDoc <- topDocs.scoreDocs.view(offset, offset+length)
+      } yield {
+        val obj = fields
+          .map(f => if (f.isEmpty) None else Some(s.document(scoreDoc.doc, f)))
+          .getOrElse(Some(s.doc(scoreDoc.doc)))
+          .map(mkObj _)
+        new SearchResult(scoreDoc.doc, scoreDoc.score, obj)
+      }
+      new SearchResults(topDocs.totalHits, results)
+    } finally releaseSearcher(s)
+  }
+
+  def acquireSearcher = searcherManager.acquire
+
+  def releaseSearcher(searcher: IndexSearcher) {
+    searcherManager release searcher
+  }
+
 }
+
+case class SearchResults(totalHits: Int, entries: Seq[SearchResult])
+
+case class SearchResult(docId: Int, score: Float,
+  obj: Option[Map[String, Seq[Any]]])
