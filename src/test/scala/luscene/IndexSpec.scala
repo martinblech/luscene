@@ -1,4 +1,4 @@
-package musicdb
+package luscene
 
 import scala.collection.JavaConversions._
 
