@@ -10,29 +10,31 @@ import org.apache.lucene.analysis.core.WhitespaceAnalyzer
 import org.apache.lucene.document._
 import org.apache.lucene.index.{IndexWriter, Term}
 import org.apache.lucene.search._
+import org.apache.lucene.store.RAMDirectory
 import org.apache.lucene.util.Version
 
 import java.io.Reader
 
 class TestIndex(indexWriter: IndexWriter, fieldStore: String => Boolean,
                 searchAnalyzer: Analyzer, searcher: IndexSearcher)
-    extends Index(indexWriter, fieldStore, searchAnalyzer) {
+    extends Index(indexWriter, fieldStore, searchAnalyzer, None) {
   override def acquireSearcher = searcher
   override def releaseSearcher(s: IndexSearcher) {}
 }
 
 class IndexSpec extends Specification with Mockito {
-  isolated
-
-  val indexWriter = mock[IndexWriter]
-  val fieldStore = (_: String) => false
-  val searchAnalyzer = new WhitespaceAnalyzer(Version.LUCENE_40)
-  val searcher = mock[IndexSearcher]
-  val index = spy(
-    new TestIndex(indexWriter, fieldStore, searchAnalyzer, searcher)
-  )
 
   "an index" should {
+    isolated
+
+    val indexWriter = mock[IndexWriter]
+    val fieldStore = (_: String) => false
+    val searchAnalyzer = new WhitespaceAnalyzer(Version.LUCENE_40)
+    val searcher = mock[IndexSearcher]
+    val index = spy(
+      new TestIndex(indexWriter, fieldStore, searchAnalyzer, searcher)
+    )
+
     "fail indexing an empty document" in {
       index.add(Map()) must throwA[IllegalArgumentException]
     }
@@ -86,9 +88,13 @@ class IndexSpec extends Specification with Mockito {
       index.mkField("", 1d) must beAnInstanceOf[DoubleField]
     }
 
+    "use the provided fieldIndex configuration" in {
+      todo // TODO
+    }
+
     "use the provided fieldStore configuration" in {
       val fieldStore = spy(Map("a" -> true, "b" -> false))
-      val index = new Index(indexWriter, fieldStore, null)
+      val index = new Index(indexWriter, fieldStore, null, None)
       index.mkField("a", "").fieldType.stored must be_==(true)
       index.mkField("b", "").fieldType.stored must be_==(false)
       index.mkField("c", "") must throwA[NoSuchElementException]
@@ -356,6 +362,21 @@ class IndexSpec extends Specification with Mockito {
         "c" -> Seq("a", 1, "b", 2l, "c", 3f, "d", 4d)
       )
       index.mkObj(index.mkDoc(obj)) must be_==(obj)
+    }
+
+  }
+
+  "an index config object" should {
+
+    "have correct default values" in {
+      val cfg = new IndexConfig {
+        override val directory = new RAMDirectory
+      }
+      todo // TODO
+    }
+
+    "load from a file correctly" in {
+      todo // TODO
     }
 
   }

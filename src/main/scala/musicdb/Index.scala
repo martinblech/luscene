@@ -1,20 +1,28 @@
 package musicdb
 
-import scala.collection.JavaConversions.{setAsJavaSet, iterableAsScalaIterable}
+import scala.collection.JavaConversions._
 
-import java.io.StringReader
+import java.io.{StringReader, File}
 
 import org.apache.lucene.analysis.Analyzer
+import org.apache.lucene.analysis.core.WhitespaceAnalyzer
+import org.apache.lucene.analysis.miscellaneous.PerFieldAnalyzerWrapper
 import org.apache.lucene.analysis.tokenattributes.CharTermAttribute
 import org.apache.lucene.document._
-import org.apache.lucene.index.{IndexWriter, IndexableField, Term}
+import org.apache.lucene.index._
 import org.apache.lucene.search._
+import org.apache.lucene.store.Directory
+import org.apache.lucene.util.Version
+
+import com.twitter.util.Eval
 
 class Index(indexWriter: IndexWriter,
             fieldStore: String => Boolean,
-            queryAnalyzer: Analyzer) {
+            searchAnalyzer: Analyzer,
+            searcherFactory: Option[SearcherFactory]) {
 
-  lazy val searcherManager = new SearcherManager(indexWriter, true, null)
+  lazy val searcherManager = new SearcherManager(
+    indexWriter, true, searcherFactory.getOrElse(null))
 
   type IndexObject = Map[String, Seq[Any]]
 
@@ -164,7 +172,7 @@ class Index(indexWriter: IndexWriter,
   }
 
   def extractTokens(fieldName: String, fieldValue: String): Seq[String] = {
-    val ts = queryAnalyzer.tokenStream(fieldName, new StringReader(fieldValue))
+    val ts = searchAnalyzer.tokenStream(fieldName, new StringReader(fieldValue))
     val charTermAttr = ts.addAttribute(classOf[CharTermAttribute])
     val tokens = new scala.collection.mutable.MutableList[String]
     try {
@@ -205,7 +213,59 @@ class Index(indexWriter: IndexWriter,
 
 }
 
+object Index {
+
+  def fromConfig(config: IndexConfig): Index = {
+    val indexWriter = new IndexWriter(config.directory, config.indexWriterConfig)
+    new Index(indexWriter, config.fieldStore, config.searchAnalyzer,
+      config.searcherFactory)
+  }
+
+  def fromConfig(configFile: File): Index = {
+    val config: IndexConfig = new Eval()(configFile)
+    fromConfig(config)
+  }
+
+}
+
 case class SearchResults(totalHits: Int, entries: Seq[SearchResult])
 
 case class SearchResult(docId: Int, score: Float,
   obj: Option[Map[String, Seq[Any]]])
+
+trait IndexConfig {
+  private def mkPerFieldAnalyzer(get: FieldSettings => Analyzer) = {
+    val defaultAnalyzer = get(defaultField)
+    val perFieldAnalyzers = for {
+      (name, settings) <- fields
+    } yield (name, get(settings))
+    new PerFieldAnalyzerWrapper(defaultAnalyzer, perFieldAnalyzers)
+  }
+
+  lazy val indexAnalyzer: Analyzer = mkPerFieldAnalyzer(_.indexAnalyzer)
+  lazy val searchAnalyzer: Analyzer = mkPerFieldAnalyzer(_.searchAnalyzer)
+
+  private def mkMap[A](get: FieldSettings => A) = {
+    (for {
+      (name, settings) <- fields
+    } yield (name, get(settings))) withDefaultValue get(defaultField)
+  }
+
+  lazy val fieldIndex: String => Boolean = mkMap(_.index)
+  lazy val fieldStore: String => Boolean = mkMap(_.store)
+  lazy val searcherFactory: Option[SearcherFactory] = None
+  lazy val indexWriterConfig: IndexWriterConfig =
+    new IndexWriterConfig(Version.LUCENE_40, indexAnalyzer)
+
+  class FieldSettings {
+    val analyzer: Analyzer = new WhitespaceAnalyzer(Version.LUCENE_40)
+    lazy val indexAnalyzer: Analyzer = analyzer
+    lazy val searchAnalyzer: Analyzer = analyzer
+    val index: Boolean = true
+    val store: Boolean = true
+  }
+
+  val fields: Map[String, FieldSettings] = Map()
+  val defaultField: FieldSettings = new FieldSettings
+  val directory: Directory
+}
