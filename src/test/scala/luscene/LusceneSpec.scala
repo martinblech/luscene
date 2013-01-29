@@ -10,41 +10,18 @@ import org.apache.lucene.analysis.core.WhitespaceAnalyzer
 import org.apache.lucene.document._
 import org.apache.lucene.index.{IndexWriter, Term}
 import org.apache.lucene.search._
-import org.apache.lucene.store.RAMDirectory
+import org.apache.lucene.store.{Directory, RAMDirectory}
 import org.apache.lucene.util.Version
 
 import java.io.Reader
 
-class TestIndex(indexWriter: IndexWriter, fieldStore: String => Boolean,
-                searchAnalyzer: Analyzer, searcher: IndexSearcher)
-    extends Index(indexWriter, fieldStore, searchAnalyzer, None) {
-  override def acquireSearcher = searcher
-  override def releaseSearcher(s: IndexSearcher) {}
-}
+class LusceneSpec extends Specification with Mockito {
 
-class IndexSpec extends Specification with Mockito {
-
-  "an index" should {
+  "a document builder" should {
     isolated
 
-    val indexWriter = mock[IndexWriter]
-    val fieldStore = (_: String) => false
-    val searchAnalyzer = new WhitespaceAnalyzer(Version.LUCENE_40)
-    val searcher = mock[IndexSearcher]
-    val index = spy(
-      new TestIndex(indexWriter, fieldStore, searchAnalyzer, searcher)
-    )
-
-    "fail indexing an empty document" in {
-      index.add(Map()) must throwA[IllegalArgumentException]
-    }
-
-    "index a simple document" in {
-      val obj = Map("id" -> Seq("doc_a"))
-      index.add(obj)
-      val doc = capture[Document]
-      there was one(indexWriter).addDocument(doc)
-      doc.value.getFields.map(_.name).toSet must be_==(obj.keys)
+    val index = new DocumentBuilder {
+      override val fieldStore = mock[String => Boolean]
     }
 
     "make a doc whose fields match the object's" in {
@@ -93,25 +70,40 @@ class IndexSpec extends Specification with Mockito {
     }
 
     "use the provided fieldStore configuration" in {
-      val fieldStore = spy(Map("a" -> true, "b" -> false))
-      val index = new Index(indexWriter, fieldStore, null, None)
+      index.fieldStore.apply("a") returns true
+      index.fieldStore.apply("b") returns false
+      index.fieldStore.apply("c") throws new NoSuchElementException
       index.mkField("a", "").fieldType.stored must be_==(true)
       index.mkField("b", "").fieldType.stored must be_==(false)
       index.mkField("c", "") must throwA[NoSuchElementException]
-      there was one(fieldStore).apply("a")
-      there was one(fieldStore).apply("b")
-      there was one(fieldStore).apply("c")
+      there was one(index.fieldStore).apply("a")
+      there was one(index.fieldStore).apply("b")
+      there was one(index.fieldStore).apply("c")
+    }
+  }
+
+  "an index writer" should {
+    isolated
+
+    val index = new Writer with DocumentBuilder {
+      override val indexWriter = mock[IndexWriter]
+      override val fieldStore = mock[String => Boolean]
+    }
+
+    "fail indexing an empty document" in {
+      index.add(Map()) must throwA[IllegalArgumentException]
+    }
+
+    "index a simple document" in {
+      val obj = Map("id" -> Seq("doc_a"))
+      index.add(obj)
+      val doc = capture[Document]
+      there was one(index.indexWriter).addDocument(doc)
+      doc.value.getFields.map(_.name).toSet must be_==(obj.keys)
     }
 
     "fail to update with an empty document" in {
       index.update("", "", Map()) must throwA[IllegalArgumentException]
-    }
-
-    "fail to update with bad id values" in {
-      val obj = Map("a" -> Seq("b"))
-      index.update("", Nil, obj) must throwA[IllegalArgumentException]
-      (index.update("", new java.math.BigDecimal(1), obj)
-        must throwA[IllegalArgumentException])
     }
 
     "update a simple document with a string id" in {
@@ -121,32 +113,20 @@ class IndexSpec extends Specification with Mockito {
       index.update(fieldName, fieldValue, obj)
       val term = capture[Term]
       val doc = capture[Document]
-      there was one(indexWriter).updateDocument(term, doc)
+      there was one(index.indexWriter).updateDocument(term, doc)
       term.value.field must be_==(fieldName)
       term.value.text must be_==(fieldValue)
       doc.value.getFields.map(_.name).toSet must be_==(obj.keys)
     }
 
-    "update a simple document with a numeric id" in {
+    "update based on query" in {
       val obj = Map("id" -> Seq("bla"), "val" -> Seq("x"))
-      val fieldName = "id"
-      val fieldValue = 1
-      index.update(fieldName, fieldValue, obj)
-      val query = capture[NumericRangeQuery[Integer]]
+      val query = mock[Query]
+      index.update(query, obj)
       val doc = capture[Document]
-      there was one(indexWriter).deleteDocuments(query)
-      query.value.includesMin must be_==(true)
-      query.value.includesMax must be_==(true)
-      query.value.getMin must be_==(fieldValue)
-      query.value.getMax must be_==(fieldValue)
-      there was one(indexWriter).addDocument(doc)
+      there was one(index.indexWriter).deleteDocuments(query)
+      there was one(index.indexWriter).addDocument(doc)
       doc.value.getFields.map(_.name).toSet must be_==(obj.keys)
-    }
-
-    "fail to delete with bad id values" in {
-      index.delete("", Nil) must throwA[IllegalArgumentException]
-      (index.delete("", new java.math.BigDecimal(1))
-        must throwA[IllegalArgumentException])
     }
 
     "delete a document with a string id" in {
@@ -154,21 +134,29 @@ class IndexSpec extends Specification with Mockito {
       val fieldValue = "bla"
       index.delete(fieldName, fieldValue)
       val term = capture[Term]
-      there was one(indexWriter).deleteDocuments(term)
+      there was one(index.indexWriter).deleteDocuments(term)
       term.value.field must be_==(fieldName)
       term.value.text must be_==(fieldValue)
     }
 
-    "delete a document with a numeric id" in {
-      val fieldName = "id"
-      val fieldValue = 1f
-      index.delete(fieldName, fieldValue)
-      val query = capture[NumericRangeQuery[java.lang.Float]]
-      there was one(indexWriter).deleteDocuments(query)
-      query.value.includesMin must be_==(true)
-      query.value.includesMax must be_==(true)
-      query.value.getMin must be_==(fieldValue)
-      query.value.getMax must be_==(fieldValue)
+    "delete a document by query" in {
+      val query = mock[Query]
+      index.delete(query)
+      there was one(index.indexWriter).deleteDocuments(query)
+    }
+
+    "close the wrapped writer when asked to" in {
+      index.close
+      there was one(index.indexWriter).close
+    }
+
+  }
+
+  "a query builder" should {
+    isolated
+
+    val index = new QueryBuilder {
+      override val searchAnalyzer = new WhitespaceAnalyzer(Version.LUCENE_40)
     }
 
     "fail making a query for an empty object" in {
@@ -304,6 +292,45 @@ class IndexSpec extends Specification with Mockito {
       (index.mkQuery(Map("a" -> Seq(1)), fuzzy=true)
         must throwAn[IllegalArgumentException])
     }
+  }
+
+  "an object builder" should {
+    isolated
+
+    val index = new ObjectBuilder with DocumentBuilder {
+      override val fieldStore = mock[String => Boolean]
+    }
+
+    "make an object from a doc with a string field" in {
+      val obj = Map("a" -> Seq("b"))
+      index.mkObj(index.mkDoc(obj)) must be_==(obj)
+    }
+
+    "make an object from a doc with a numeric field" in {
+      val obj = Map("a" -> Seq(1))
+      index.mkObj(index.mkDoc(obj)) must be_==(obj)
+    }
+
+    "roundtrip object<->doc with many fields" in {
+      val obj = Map(
+        "a" -> Seq("a", "b", "c"),
+        "b" -> Seq(1, 2l, 3f, 4d),
+        "c" -> Seq("a", 1, "b", 2l, "c", 3f, "d", 4d)
+      )
+      index.mkObj(index.mkDoc(obj)) must be_==(obj)
+    }
+  }
+
+  "a searcher" should {
+    isolated
+
+    val searcher = mock[IndexSearcher]
+    class TestSearcher extends Searcher with ObjectBuilder with DocumentBuilder {
+      val fieldStore = mock[String => Boolean]
+      def acquireSearcher = searcher
+      def releaseSearcher(searcher: IndexSearcher) {}
+    }
+    val index = spy(new TestSearcher)
 
     "release the searcher when the query goes ok" in {
       searcher.search(any[Query], anyInt) returns new TopDocs(0, Array(), 0f)
@@ -344,24 +371,35 @@ class IndexSpec extends Specification with Mockito {
       results.entries(1) must be_==(
         SearchResult(2, 1f, Some(Map("b" -> Seq("what's up", 1)))))
     }
+  }
 
-    "make an object from a doc with a string field" in {
-      val obj = Map("a" -> Seq("b"))
-      index.mkObj(index.mkDoc(obj)) must be_==(obj)
+  "a read/write index" should {
+
+    "instantiate correctly with constructor" in {
+      val indexWriter = mock[IndexWriter]
+      val fieldStore = mock[String => Boolean]
+      val searchAnalyzer = mock[Analyzer]
+      val rwindex = new RWIndex(indexWriter, fieldStore, searchAnalyzer, None)
+      rwindex must beAnInstanceOf[RWIndex]
     }
 
-    "make an object from a doc with a numeric field" in {
-      val obj = Map("a" -> Seq(1))
-      index.mkObj(index.mkDoc(obj)) must be_==(obj)
+    "instantiate correctly with config" in {
+      todo
     }
 
-    "roundtrip object<->doc with many fields" in {
-      val obj = Map(
-        "a" -> Seq("a", "b", "c"),
-        "b" -> Seq(1, 2l, 3f, 4d),
-        "c" -> Seq("a", 1, "b", 2l, "c", 3f, "d", 4d)
-      )
-      index.mkObj(index.mkDoc(obj)) must be_==(obj)
+  }
+
+  "a read-only index" should {
+
+    "instantiate correctly with constructor" in {
+      val directory = mock[Directory]
+      val searchAnalyzer = mock[Analyzer]
+      val roindex = new ROIndex(directory, searchAnalyzer, None)
+      roindex must beAnInstanceOf[ROIndex]
+    }
+
+    "instantiate correctly with config" in {
+      todo
     }
 
   }
