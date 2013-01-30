@@ -6,7 +6,6 @@ import org.apache.lucene.search.Query
 trait Writer { _: DocumentBuilder =>
 
   val indexWriter: IndexWriter
-  val fieldStore: String => Boolean
 
   def checkObj(obj: IndexObject) =
     require(!obj.isEmpty)

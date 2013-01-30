@@ -6,6 +6,7 @@ import org.apache.lucene.search.{IndexSearcher, SearcherFactory, SearcherManager
 
 class RWIndex(val indexWriter: IndexWriter,
               val fieldStore: String => Boolean,
+              val fieldIndex: String => Boolean,
               val searchAnalyzer: Analyzer,
               val searcherFactory: Option[SearcherFactory])
     extends DocumentBuilder
@@ -28,7 +29,7 @@ class RWIndex(val indexWriter: IndexWriter,
 object RWIndex {
   def withConfig(config: IndexConfig) = {
     val indexWriter = new IndexWriter(config.directory, config.indexWriterConfig)
-    new RWIndex(indexWriter, config.fieldStore, config.searchAnalyzer,
-      config.searcherFactory)
+    new RWIndex(indexWriter, config.fieldStore, config.fieldIndex,
+      config.searchAnalyzer, config.searcherFactory)
   }
 }

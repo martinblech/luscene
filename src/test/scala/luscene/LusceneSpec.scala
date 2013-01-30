@@ -21,7 +21,8 @@ class LusceneSpec extends Specification with Mockito {
     isolated
 
     val index = new DocumentBuilder {
-      override val fieldStore = mock[String => Boolean]
+      override val fieldStore = mock[String => Boolean] defaultReturn true
+      override val fieldIndex = mock[String => Boolean] defaultReturn true
     }
 
     "make a doc whose fields match the object's" in {
@@ -45,28 +46,51 @@ class LusceneSpec extends Specification with Mockito {
       index.mkField("", Nil) must throwA[IllegalArgumentException]
     }
 
-    "make a TextField for a String" in {
-      index.mkField("", "") must beAnInstanceOf[TextField]
+    "make a field for a String" in {
+      val value = "abc"
+      val field = index.mkField("", value)
+      field.stringValue must be_==(value)
+      field.numericValue must beNull
     }
 
-    "make a IntField for a Int" in {
-      index.mkField("", 1) must beAnInstanceOf[IntField]
+    "make a field for an Int" in {
+      val value = Int.MaxValue
+      val field = index.mkField("", value)
+      field.numericValue must be_==(value)
+      field.stringValue must be_==(value.toString)
     }
 
-    "make a LongField for a Long" in {
-      index.mkField("", 1l) must beAnInstanceOf[LongField]
+    "make a field for a Long" in {
+      val value = Long.MaxValue
+      val field = index.mkField("", value)
+      field.numericValue must be_==(value)
+      field.stringValue must be_==(value.toString)
     }
 
-    "make a FloatField for a Float" in {
-      index.mkField("", 1f) must beAnInstanceOf[FloatField]
+    "make a field for a Float" in {
+      val value = Float.MaxValue
+      val field = index.mkField("", value)
+      field.numericValue must be_==(value)
+      field.stringValue must be_==(value.toString)
     }
 
-    "make a DoubleField for a Double" in {
-      index.mkField("", 1d) must beAnInstanceOf[DoubleField]
+    "make a field for a Double" in {
+      val value = Double.MaxValue
+      val field = index.mkField("", value)
+      field.numericValue must be_==(value)
+      field.stringValue must be_==(value.toString)
     }
 
     "use the provided fieldIndex configuration" in {
-      todo // TODO
+      index.fieldIndex.apply("a") returns true
+      index.fieldIndex.apply("b") returns false
+      index.fieldIndex.apply("c") throws new NoSuchElementException
+      index.mkField("a", "").fieldType.indexed must be_==(true)
+      index.mkField("b", "").fieldType.indexed must be_==(false)
+      index.mkField("c", "") must throwA[NoSuchElementException]
+      there was one(index.fieldIndex).apply("a")
+      there was one(index.fieldIndex).apply("b")
+      there was one(index.fieldIndex).apply("c")
     }
 
     "use the provided fieldStore configuration" in {
@@ -87,7 +111,8 @@ class LusceneSpec extends Specification with Mockito {
 
     val index = new Writer with DocumentBuilder {
       override val indexWriter = mock[IndexWriter]
-      override val fieldStore = mock[String => Boolean]
+      override val fieldStore = mock[String => Boolean] defaultReturn true
+      override val fieldIndex = mock[String => Boolean] defaultReturn true
     }
 
     "fail indexing an empty document" in {
@@ -298,7 +323,8 @@ class LusceneSpec extends Specification with Mockito {
     isolated
 
     val index = new ObjectBuilder with DocumentBuilder {
-      override val fieldStore = mock[String => Boolean]
+      override val fieldStore = mock[String => Boolean] defaultReturn true
+      override val fieldIndex = mock[String => Boolean] defaultReturn true
     }
 
     "make an object from a doc with a string field" in {
@@ -326,7 +352,8 @@ class LusceneSpec extends Specification with Mockito {
 
     val searcher = mock[IndexSearcher]
     class TestSearcher extends Searcher with ObjectBuilder with DocumentBuilder {
-      val fieldStore = mock[String => Boolean]
+      val fieldStore = mock[String => Boolean] defaultReturn true
+      val fieldIndex = mock[String => Boolean] defaultReturn true
       def acquireSearcher = searcher
       def releaseSearcher(searcher: IndexSearcher) {}
     }
@@ -378,8 +405,10 @@ class LusceneSpec extends Specification with Mockito {
     "instantiate correctly with constructor" in {
       val indexWriter = mock[IndexWriter]
       val fieldStore = mock[String => Boolean]
+      val fieldIndex = mock[String => Boolean]
       val searchAnalyzer = mock[Analyzer]
-      val rwindex = new RWIndex(indexWriter, fieldStore, searchAnalyzer, None)
+      val rwindex = new RWIndex(indexWriter, fieldStore, fieldIndex,
+        searchAnalyzer, None)
       rwindex must beAnInstanceOf[RWIndex]
     }
 

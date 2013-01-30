@@ -6,6 +6,7 @@ import org.apache.lucene.index._
 trait DocumentBuilder {
 
   val fieldStore: String => Boolean
+  val fieldIndex: String => Boolean
 
   def mkDoc(obj: IndexObject) = {
     val doc = new Document
@@ -17,13 +18,23 @@ trait DocumentBuilder {
   }
 
   def mkField(name: String, value: Any): IndexableField = {
-    lazy val store = if (fieldStore(name)) Field.Store.YES else Field.Store.NO
+    def fieldType(ref: FieldType) = {
+      val ft = new FieldType(ref)
+      ft.setStored(fieldStore(name))
+      ft.setIndexed(fieldIndex(name))
+      ft
+    }
     value match {
-      case s: String => new TextField(name, s, store)
-      case i: Int => new IntField(name, i, store)
-      case l: Long => new LongField(name, l, store)
-      case f: Float => new FloatField(name, f, store)
-      case d: Double => new DoubleField(name, d, store)
+      case s: String =>
+        new Field(name, s, fieldType(TextField.TYPE_STORED))
+      case i: Int =>
+        new IntField(name, i, fieldType(IntField.TYPE_STORED))
+      case l: Long =>
+        new LongField(name, l, fieldType(LongField.TYPE_STORED))
+      case f: Float =>
+        new FloatField(name, f, fieldType(FloatField.TYPE_STORED))
+      case d: Double =>
+        new DoubleField(name, d, fieldType(DoubleField.TYPE_STORED))
       case _ => throw new IllegalArgumentException(
         "don't know how to index '%s' (%s)".format(value, value.getClass))
     }
