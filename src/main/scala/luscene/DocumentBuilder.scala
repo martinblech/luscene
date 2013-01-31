@@ -21,7 +21,7 @@ trait DocumentBuilder {
     def fieldType(cls: Class[_ <: IndexableField]) = {
       val stored = fieldStore(name)
       val indexed = fieldIndex(name)
-      DocumentBuilder.fieldTypeMap((cls, stored, indexed))
+      DocumentBuilder.FieldTypeMap((cls, stored, indexed))
     }
     value match {
       case s: String =>
@@ -41,7 +41,7 @@ trait DocumentBuilder {
 }
 
 object DocumentBuilder {
-  val fieldTypeMap: Map[(Class[_], Boolean, Boolean), FieldType] = Map(
+  val FieldTypeMap: Map[(Class[_], Boolean, Boolean), FieldType] = Map(
     // TextField
     (classOf[TextField], true, true) -> TextField.TYPE_STORED,
     (classOf[TextField], true, false) -> {
