@@ -6,7 +6,7 @@ import org.specs2.mutable._
 import org.specs2.mock._
 
 import org.apache.lucene.analysis.Analyzer
-import org.apache.lucene.analysis.core.WhitespaceAnalyzer
+import org.apache.lucene.analysis.core.{WhitespaceAnalyzer, KeywordAnalyzer}
 import org.apache.lucene.document._
 import org.apache.lucene.index.{IndexWriter, Term}
 import org.apache.lucene.search._
@@ -407,13 +407,33 @@ class LusceneSpec extends Specification with Mockito {
       val fieldStore = mock[String => Boolean]
       val fieldIndex = mock[String => Boolean]
       val searchAnalyzer = mock[Analyzer]
-      val rwindex = new RWIndex(indexWriter, fieldStore, fieldIndex,
+      val rwIndex = new RWIndex(indexWriter, fieldStore, fieldIndex,
         searchAnalyzer, None)
-      rwindex must beAnInstanceOf[RWIndex]
+      rwIndex must beAnInstanceOf[RWIndex]
     }
 
     "instantiate correctly with config" in {
-      todo
+      val config = new IndexConfig {
+        val directory = new RAMDirectory
+        override val fields = Map(
+          "id" -> new FieldSettings {
+            override val analyzer = new KeywordAnalyzer
+          }
+        )
+        override val defaultField = new FieldSettings {
+          override val store = false
+        }
+      }
+      val rwIndex = RWIndex withConfig config
+      rwIndex.indexWriter.getDirectory must be_==(config.directory)
+      // default fields are whitespace analyzed, not stored
+      (rwIndex.mkQuery("y", "hello world", fuzzy=false)
+        must beAnInstanceOf[PhraseQuery])
+      rwIndex.fieldStore("x") must beFalse
+      // id field is keyword analyzed, stored
+      (rwIndex.mkQuery("id", "hello world", fuzzy=false)
+        must beAnInstanceOf[TermQuery])
+      rwIndex.fieldStore("id") must beTrue
     }
 
   }
@@ -428,7 +448,22 @@ class LusceneSpec extends Specification with Mockito {
     }
 
     "instantiate correctly with config" in {
-      todo
+      val config = new IndexConfig {
+        val directory = new RAMDirectory
+        override val fields = Map(
+          "id" -> new FieldSettings {
+            override val analyzer = new KeywordAnalyzer
+          }
+        )
+      }
+      val roIndex = ROIndex withConfig config
+      roIndex.directory must be_==(config.directory)
+      // default fields are whitespace analyzed
+      (roIndex.mkQuery("y", "hello world", fuzzy=false)
+        must beAnInstanceOf[PhraseQuery])
+      // id field is keyword analyzed
+      (roIndex.mkQuery("id", "hello world", fuzzy=false)
+        must beAnInstanceOf[TermQuery])
     }
 
   }
@@ -436,14 +471,39 @@ class LusceneSpec extends Specification with Mockito {
   "an index config object" should {
 
     "have correct default values" in {
+      val dir = mock[Directory]
       val cfg = new IndexConfig {
-        override val directory = new RAMDirectory
+        val directory = dir
       }
-      todo // TODO
+      cfg.directory must be_==(dir)
+      cfg.defaultField.index must beTrue
+      cfg.defaultField.store must beTrue
+      cfg.defaultField.indexAnalyzer must beAnInstanceOf[WhitespaceAnalyzer]
+      cfg.defaultField.searchAnalyzer must beAnInstanceOf[WhitespaceAnalyzer]
+      cfg.fields must beEmpty
     }
 
-    "load from a file correctly" in {
-      todo // TODO
+    "load from scala source string correctly" in {
+      val source = """
+      import org.apache.lucene.analysis.core.KeywordAnalyzer
+      new IndexConfig {
+        val directory = null
+        override val fields = Map(
+          "id" -> new FieldSettings {
+            override lazy val searchAnalyzer = new KeywordAnalyzer
+          }
+        )
+        override val defaultField = new FieldSettings {
+          override val index = false
+        }
+      }
+      """
+      val cfg = IndexConfig fromString source
+      cfg.directory must beNull
+      cfg.fieldIndex("id") must beTrue
+      cfg.fieldIndex("x") must beFalse
+      cfg.fields("id").indexAnalyzer must beAnInstanceOf[WhitespaceAnalyzer]
+      cfg.fields("id").searchAnalyzer must beAnInstanceOf[KeywordAnalyzer]
     }
 
   }

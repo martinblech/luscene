@@ -1,8 +1,10 @@
 package luscene
 
 import scala.collection.JavaConversions._
+import scala.reflect.runtime.currentMirror
+import scala.tools.reflect.ToolBox
 
-import java.io.File
+import java.io.{File, InputStream}
 
 import org.apache.lucene.analysis.Analyzer
 import org.apache.lucene.analysis.core.WhitespaceAnalyzer
@@ -11,8 +13,6 @@ import org.apache.lucene.index.IndexWriterConfig
 import org.apache.lucene.search.SearcherFactory
 import org.apache.lucene.store.Directory
 import org.apache.lucene.util.Version
-
-import com.twitter.util.Eval
 
 trait IndexConfig {
   private def mkPerFieldAnalyzer(get: FieldSettings => Analyzer) = {
@@ -52,5 +52,15 @@ trait IndexConfig {
 }
 
 object IndexConfig {
-  def fromFile(file: File): IndexConfig = new Eval()(file)
+  private def eval[A](source: String): A = {
+    val processedSource =
+      "import " + classOf[IndexConfig].getName + "\n" + source
+    val tb = currentMirror.mkToolBox()
+    tb.eval(tb.parse(processedSource)).asInstanceOf[A]
+  }
+  def fromFile(file: File): IndexConfig =
+    eval(io.Source.fromFile(file).mkString)
+  def fromStream(inputStream: InputStream): IndexConfig =
+    eval(io.Source.fromInputStream(inputStream).mkString)
+  def fromString(source: String): IndexConfig = eval(source)
 }

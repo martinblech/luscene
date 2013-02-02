@@ -7,7 +7,7 @@ import org.apache.lucene.store.Directory
 class ROIndex(val directory: Directory,
               val searchAnalyzer: Analyzer,
               val searcherFactory: Option[SearcherFactory])
-    extends Searcher with ObjectBuilder {
+    extends Searcher with ObjectBuilder with QueryBuilder {
 
   lazy val searcherManager = new SearcherManager(
     directory, searcherFactory.getOrElse(null))
